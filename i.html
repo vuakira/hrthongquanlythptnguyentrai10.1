@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống Quản Lý Nề Nếp THPT Nguyễn Trãi</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .cursor-wait { cursor: wait; }
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #475569 #1e293b; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body class="bg-slate-900 text-white">
+    
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+        const { createRoot } = ReactDOM;
+
+        // --- CẤU HÌNH ---
+        // !!! QUAN TRỌNG: Thay link Google Apps Script Web App của bạn vào dưới đây
+        const APPS_SCRIPT_URL = 'DÁN_LINK_DEPLOY_CỦA_BẠN_VÀO_ĐÂY'; 
+        
+        const LOGO_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ9tx42ri-D4HFIbkykt6qkhjnJYkFfr0Msng&s";
+        const SCHOOL_WEB_URL = "https://script.google.com/macros/s/AKfycby_pSc4PFraEHC4uhLR_uDYLhWPrwLGjL59rNlcjTlkT9dSU3EgVpUzhDu4wSfun1noMQ/exec";
+        const SCHOOL_START_DATE = new Date('2025-09-08'); 
+
+        const CLASS_LIST = [
+            ...Array.from({ length: 9 }, (_, i) => `10/${i + 1}`),
+            ...Array.from({ length: 10 }, (_, i) => `11/${i + 1}`),
+            ...Array.from({ length: 10 }, (_, i) => `12/${i + 1}`)
+        ];
+
+        const THEMES = [
+            { id: 'default', name: 'Mặc định (Tối)', class: 'bg-slate-900', iconColor: 'bg-slate-900' },
+            { id: 'galaxy', name: 'Galaxy (Xanh)', class: 'bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900', iconColor: 'bg-blue-800' },
+            { id: 'dreamy', name: 'Mộng Mơ (Tím)', class: 'bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900', iconColor: 'bg-purple-800' },
+            { id: 'power', name: 'Quyền Lực (Đỏ)', class: 'bg-gradient-to-br from-slate-900 via-red-950 to-slate-900', iconColor: 'bg-red-900' },
+            { id: 'forest', name: 'Rừng Rậm (Lá)', class: 'bg-gradient-to-br from-slate-900 via-emerald-900 to-slate-900', iconColor: 'bg-emerald-800' },
+        ];
+
+        // --- UTILS ---
+        const toPascalCase = (str) => str.replace(/(^\w|-\w)/g, (clear) => clear.replace('-', '').toUpperCase());
+        const getFullName = (user) => user ? (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : (user.fullName || user.username)) : '';
+        const getRoleDisplayName = (role) => role==='admin'?'Admin':role==='teacher'?'Giáo viên':role==='prefect'?'Ban Thi Đua':role;
+
+        // --- API ---
+        const api = {
+            fetchData: async (action) => {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 20000);
+                try {
+                    const res = await fetch(`${APPS_SCRIPT_URL}?action=${action}&t=${Date.now()}`, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    return await res.json();
+                } catch (error) { console.error(error); return []; }
+            },
+            postData: async (action, data) => {
+                try {
+                    await fetch(APPS_SCRIPT_URL, {
+                        method: 'POST', mode: 'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action, ...data })
+                    });
+                    return { success: true };
+                } catch (error) { return { success: false }; }
+            }
+        };
+
+        // --- COMPONENTS ---
+        const Icon = ({ name, size = 24, className, ...props }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons && ref.current) {
+                    const iconName = toPascalCase(name);
+                    const iconNode = window.lucide.icons[iconName];
+                    if (iconNode) {
+                        ref.current.innerHTML = '';
+                        const svg = window.lucide.createElement(iconNode);
+                        svg.setAttribute('width', size);
+                        svg.setAttribute('height', size);
+                        if (className) svg.setAttribute('class', className);
+                        Object.keys(props).forEach(key => svg.setAttribute(key.replace(/([A-Z])/g, "-$1").toLowerCase(), props[key]));
+                        ref.current.appendChild(svg);
+                    }
+                }
+            }, [name, size, className, props]);
+            return <span ref={ref} style={{ display: 'inline-flex', verticalAlign: 'middle' }}></span>;
+        };
+
+        const Toast = ({ message, type, onClose }) => {
+            useEffect(() => { const timer = setTimeout(onClose, 3000); return () => clearTimeout(timer); }, [onClose]);
+            if (!message) return null;
+            return <div className={`fixed top-4 right-4 px-6 py-3 rounded-lg shadow-xl z-[70] flex items-center gap-2 text-white font-bold animate-bounce ${type === 'error' ? 'bg-red-600' : 'bg-green-600'}`}><Icon name={type === 'error' ? 'alert-triangle' : 'check-circle'} size={20}/> {message}</div>;
+        };
+
+        const SchoolLogo = ({ size = "md" }) => {
+            const dim = size === "lg" ? "w-24 h-24" : "w-12 h-12";
+            const iconSize = size === "lg" ? 48 : 24;
+            return (
+                <a href={SCHOOL_WEB_URL} target="_blank" rel="noreferrer" className="block rounded-full overflow-hidden shadow-lg hover:scale-105 transition-transform border-2 border-white/20" title="Web Trường THPT Nguyễn Trãi">
+                    <div className={`${dim} bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center`}>
+                        <Icon name="sparkles" size={iconSize} className="text-white drop-shadow-md animate-pulse" />
+                    </div>
+                </a>
+            );
+        };
+
+        const ThemeSelector = ({ currentTheme, onSelectTheme }) => {
+            const [isOpen, setIsOpen] = useState(false);
+            const wrapperRef = useRef(null);
+            useEffect(() => {
+                function handleClickOutside(event) { if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); }
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, [wrapperRef]);
+            return (
+                <div className="relative" ref={wrapperRef}>
+                    <button onClick={() => setIsOpen(!isOpen)} className="p-2 rounded-full hover:bg-white/10 transition-colors border border-white/20 shadow-sm flex items-center justify-center bg-slate-800/50 backdrop-blur-sm"><Icon name="palette" size={20} /></button>
+                    {isOpen && (
+                        <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-2 z-50 overflow-hidden">
+                            {THEMES.map(t => (
+                                <button key={t.id} onClick={() => { onSelectTheme(t); setIsOpen(false); }} className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 hover:bg-slate-700 mb-1 ${currentTheme.id === t.id ? 'bg-slate-700 ring-1 ring-blue-500' : ''}`}>
+                                    <div className={`w-4 h-4 rounded-full ${t.iconColor} border border-slate-500`}></div><span>{t.name}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const PasswordField = ({ value, onChange, placeholder = "Mật khẩu" }) => {
+            const [show, setShow] = useState(false);
+            return (
+                <div className="flex items-center bg-slate-900 rounded-xl border border-slate-600 px-4 py-3 focus-within:border-blue-500 transition-all">
+                    <Icon name="lock" size={20} className="text-slate-500 mr-3"/>
+                    <input value={value} onChange={onChange} type={show ? "text" : "password"} className="bg-transparent flex-1 text-white outline-none" placeholder={placeholder} />
+                    <button type="button" onClick={() => setShow(!show)} className="text-slate-500 hover:text-white transition-colors focus:outline-none"><Icon name={show ? "eye-off" : "eye"} size={20}/></button>
+                </div>
+            );
+        };
+
+        // --- RANKING COMPONENT (THI ĐUA TUẦN) ---
+        const RankingComponent = ({ showToast, api, onCancel }) => {
+            const [week, setWeek] = useState(1);
+            const [isLoading, setIsLoading] = useState(false);
+            const [isSaving, setIsSaving] = useState(false);
+            const [scoreData, setScoreData] = useState({});
+
+            useEffect(() => { loadScores(); }, [week]);
+
+            const loadScores = async () => {
+                setIsLoading(true);
+                const allScores = await api.fetchData('getScores');
+                const weeklyScores = Array.isArray(allScores) ? allScores.filter(s => s.week == week) : [];
+                const newData = {};
+                CLASS_LIST.forEach(cls => {
+                    const found = weeklyScores.find(s => s.classId == cls);
+                    newData[cls] = found ? { sdb: found.scoreA, nenep: found.scoreB, chaoco: found.scoreC, phongtrao: found.scoreD } : { sdb: '', nenep: 100, chaoco: 100, phongtrao: 0 };
+                });
+                setScoreData(newData);
+                setIsLoading(false);
+            };
+
+            const handleInputChange = (cls, field, value) => {
+                setScoreData(prev => ({ ...prev, [cls]: { ...prev[cls], [field]: value } }));
+            };
+
+            const calculateTotal = (data) => {
+                if (!data) return 0;
+                const sdb = parseFloat(data.sdb);
+                if (isNaN(sdb)) return 0;
+                const nenep = parseFloat(data.nenep) || 0;
+                const chaoco = parseFloat(data.chaoco) || 0;
+                const phongtrao = parseFloat(data.phongtrao) || 0;
+                const avg = (sdb * 3 + nenep * 2 + chaoco * 1) / 6;
+                return (avg + phongtrao).toFixed(2);
+            };
+
+            const handleSave = async () => {
+                if (!confirm(`Xác nhận lưu điểm Tuần ${week}?`)) return;
+                setIsSaving(true);
+                const dataToSave = CLASS_LIST.map(cls => {
+                    const d = scoreData[cls];
+                    if (d.sdb === '' || d.sdb === null) return null;
+                    return { week: week, classId: cls, scoreA: d.sdb, scoreB: d.nenep, scoreC: d.chaoco, scoreD: d.phongtrao, total: calculateTotal(d) };
+                }).filter(item => item !== null);
+                const promises = dataToSave.map(item => api.postData('saveScores', item));
+                await Promise.all(promises);
+                showToast(`Đã lưu thành công tuần ${week}`);
+                setIsSaving(false);
+            };
+
+            return (
+                <div className="flex flex-col h-full animate-fade-in text-slate-200">
+                    <div className="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg mb-4 shrink-0">
+                        <div className="flex items-center gap-4 mb-3 md:mb-0">
+                            <div className="flex items-center gap-2 text-yellow-500 font-bold text-xl uppercase"><Icon name="trophy" /> THI ĐUA TUẦN</div>
+                            <div className="flex items-center bg-slate-900 rounded-lg px-3 py-1 border border-slate-600">
+                                <span className="text-slate-400 text-xs font-bold mr-2 uppercase">Tuần</span>
+                                <input type="number" min="1" max="42" value={week} onChange={(e) => setWeek(e.target.value)} className="bg-transparent w-10 text-center font-bold text-yellow-400 outline-none" />
+                            </div>
+                        </div>
+                        <div className="flex gap-3">
+                            <button onClick={onCancel} className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold transition-colors">Hủy</button>
+                            <button onClick={handleSave} disabled={isSaving || isLoading} className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold shadow-lg flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50">{isSaving ? <Icon name="loader" className="animate-spin" size={18}/> : <Icon name="save" size={18}/>} Lưu lại</button>
+                        </div>
+                    </div>
+                    <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 shadow-xl overflow-hidden flex flex-col relative">
+                        {isLoading && <div className="absolute inset-0 bg-slate-900/80 z-20 flex items-center justify-center"><div className="flex flex-col items-center"><Icon name="loader" className="animate-spin text-blue-500 mb-2" size={32}/><span>Đang tải dữ liệu...</span></div></div>}
+                        <div className="overflow-y-auto custom-scrollbar flex-1">
+                            <table className="w-full text-left border-collapse">
+                                <thead className="bg-slate-900 sticky top-0 z-10 text-xs font-bold uppercase tracking-wider text-slate-400">
+                                    <tr><th className="p-4 border-b border-slate-700">Lớp</th><th className="p-4 border-b border-slate-700 text-center text-yellow-500">Sổ ĐB (x3)</th><th className="p-4 border-b border-slate-700 text-center text-blue-400">Nề Nếp (x2)</th><th className="p-4 border-b border-slate-700 text-center text-purple-400">Chào Cờ (x1)</th><th className="p-4 border-b border-slate-700 text-center text-green-400">Phong Trào</th><th className="p-4 border-b border-slate-700 text-right text-white">Tổng</th></tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-700">
+                                    {CLASS_LIST.map(cls => {
+                                        const d = scoreData[cls] || { sdb: '', nenep: 100, chaoco: 100, phongtrao: 0 };
+                                        const total = calculateTotal(d);
+                                        return (
+                                            <tr key={cls} className="hover:bg-slate-700/30 transition-colors">
+                                                <td className="p-4 font-bold text-lg">{cls}</td>
+                                                <td className="p-3 text-center"><input type="number" step="0.1" className="w-20 bg-slate-900 border border-slate-600 rounded-lg py-2 text-center text-white font-bold outline-none focus:border-yellow-500" value={d.sdb} onChange={(e) => handleInputChange(cls, 'sdb', e.target.value)} placeholder="..." /></td>
+                                                <td className="p-3 text-center"><input type="number" step="0.5" className="w-20 bg-slate-900 border border-slate-600 rounded-lg py-2 text-center text-white outline-none focus:border-blue-500" value={d.nenep} onChange={(e) => handleInputChange(cls, 'nenep', e.target.value)} /></td>
+                                                <td className="p-3 text-center"><input type="number" step="0.5" className="w-20 bg-slate-900 border border-slate-600 rounded-lg py-2 text-center text-white outline-none focus:border-purple-500" value={d.chaoco} onChange={(e) => handleInputChange(cls, 'chaoco', e.target.value)} /></td>
+                                                <td className="p-3 text-center"><input type="number" step="0.5" className="w-20 bg-slate-900 border border-slate-600 rounded-lg py-2 text-center text-white outline-none focus:border-green-500" value={d.phongtrao} onChange={(e) => handleInputChange(cls, 'phongtrao', e.target.value)} /></td>
+                                                <td className="p-4 text-right"><span className={`text-xl font-black ${total > 0 ? 'text-green-400' : 'text-slate-500'}`}>{total}</span></td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const BarChart = ({ data }) => {
+            const chartRef = useRef(null);
+            const canvasRef = useRef(null);
+            useEffect(() => {
+                if (!canvasRef.current || !window.Chart) return;
+                const ctx = canvasRef.current.getContext('2d');
+                if (chartRef.current) chartRef.current.destroy();
+                chartRef.current = new Chart(ctx, {
+                    type: 'bar',
+                    data: { labels: data.map(d => d.name), datasets: [{ label: 'Số lần vi phạm', data: data.map(d => d.count), backgroundColor: 'rgba(59, 130, 246, 0.8)', borderColor: 'rgba(59, 130, 246, 1)', borderWidth: 1, borderRadius: 4 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }, x: { ticks: { color: '#94a3b8' }, grid: { display: false } } } }
+                });
+                return () => { if (chartRef.current) chartRef.current.destroy(); };
+            }, [data]);
+            return <canvas ref={canvasRef} />;
+        };
+
+        // --- DIARY COMPONENT (SỔ ĐẦU BÀI) ---
+        const DiaryComponent = ({ showToast, appUser }) => {
+            const WEEKS_LIST = useMemo(() => {
+                const weeks = [];
+                for(let i = 1; i <= 42; i++) {
+                    const d = new Date(SCHOOL_START_DATE);
+                    d.setDate(d.getDate() + (i-1)*7);
+                    const endD = new Date(d); endD.setDate(d.getDate() + 6);
+                    weeks.push({ value: i, label: `Tuần ${i} (${d.getDate()}/${d.getMonth()+1} - ${endD.getDate()}/${endD.getMonth()+1})`, startDate: d });
+                }
+                return weeks;
+            }, []);
+            
+            const getCurrentWeek = () => {
+                const today = new Date();
+                const diff = today - SCHOOL_START_DATE;
+                const week = Math.floor(diff / (1000 * 60 * 60 * 24 * 7)) + 1;
+                return (week > 0 && week <= 42) ? week : 1;
+            };
+
+            const [selectedWeek, setSelectedWeek] = useState(getCurrentWeek());
+            const [classId, setClassId] = useState('10/1');
+            const [activeTab, setActiveTab] = useState(0); 
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [weekData, setWeekData] = useState(() => Array.from({ length: 5 }, () => Array.from({ length: 5 }, (_, i) => ({ period: `Tiết ${i + 1}`, score: '', note: '' }))));
+
+            if (!['admin','teacher','prefect'].includes(appUser.role)) return <div className="p-8 text-center text-slate-500">Bạn không có quyền truy cập chức năng này.</div>;
+
+            const weekDates = useMemo(() => {
+                const start = new Date(SCHOOL_START_DATE);
+                start.setDate(start.getDate() + (selectedWeek - 1) * 7);
+                return Array.from({ length: 5 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+            }, [selectedWeek]);
+
+            const handleInputChange = (dayIndex, periodIndex, field, value) => {
+                const newData = [...weekData]; newData[dayIndex][periodIndex][field] = value; setWeekData(newData);
+            };
+
+            const submitDiary = async () => {
+                const entriesToSend = [];
+                weekData.forEach((dayPeriods, dayIndex) => {
+                    const dateStr = weekDates[dayIndex].toISOString().split('T')[0];
+                    dayPeriods.forEach(p => { if (p.score) entriesToSend.push({ date: dateStr, period: p.period, score: p.score, note: p.note }); });
+                });
+                if (entriesToSend.length === 0) return showToast('Vui lòng nhập ít nhất một đầu điểm', 'error');
+                if (!window.confirm(`Gửi ${entriesToSend.length} đầu điểm cho lớp ${classId} - Tuần ${selectedWeek}?`)) return;
+                setIsSubmitting(true);
+                try {
+                    await api.postData('addDiaryWeekly', { classId: classId, reporter: getFullName(appUser), entries: entriesToSend });
+                    showToast(`Đã lưu thành công!`);
+                } catch (e) { showToast('Lỗi khi gửi dữ liệu', 'error'); } finally { setIsSubmitting(false); }
+            };
+
+            return (
+                <div className="flex justify-center animate-fade-in pb-10">
+                    <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-4xl shadow-xl overflow-hidden relative">
+                         {isSubmitting && <div className="absolute inset-0 bg-slate-900/80 z-50 flex flex-col items-center justify-center"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2"></div><span className="text-sm font-bold text-blue-400">Đang lưu dữ liệu...</span></div>}
+                        <div className="bg-slate-900 p-6 border-b border-slate-700">
+                            <h2 className="text-2xl font-bold mb-4 text-center text-blue-400 flex justify-center gap-2 items-center"><Icon name="book-open" /> Sổ Đầu Bài</h2>
+                            <div className="flex flex-col md:flex-row gap-4 justify-center items-center">
+                                <div className="flex flex-col"><label className="text-slate-400 text-xs mb-1 font-bold ml-1">Chọn lớp</label><select value={classId} onChange={e => setClassId(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 font-bold text-white outline-none focus:border-blue-500 min-w-[120px]">{CLASS_LIST.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                                <div className="flex flex-col"><label className="text-slate-400 text-xs mb-1 font-bold ml-1">Chọn tuần</label><select value={selectedWeek} onChange={e => setSelectedWeek(parseInt(e.target.value))} className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white outline-none focus:border-blue-500 min-w-[200px]">{WEEKS_LIST.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}</select></div>
+                            </div>
+                        </div>
+                        <div className="flex overflow-x-auto border-b border-slate-700 bg-slate-900/50">
+                            {['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6'].map((day, index) => (
+                                <button key={index} onClick={() => setActiveTab(index)} className={`flex-1 py-4 px-2 text-sm font-bold whitespace-nowrap transition-colors flex flex-col items-center gap-1 ${activeTab === index ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-800' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}><span>{day}</span><span className="text-xs font-mono opacity-70 bg-slate-900 px-1.5 rounded">{weekDates[index].getDate()}/{weekDates[index].getMonth() + 1}</span></button>
+                            ))}
+                        </div>
+                        <div className="p-6 bg-slate-800">
+                            <div className="space-y-4">
+                                {weekData[activeTab].map((periodData, pIndex) => (
+                                    <div key={pIndex} className="flex flex-col md:flex-row gap-3 items-start md:items-center bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+                                        <div className="min-w-[80px] font-bold text-blue-300 flex items-center gap-2"><div className="w-8 h-8 rounded-full bg-blue-900/50 flex items-center justify-center text-sm">{pIndex + 1}</div> Tiết {pIndex + 1}</div>
+                                        <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-4 gap-3">
+                                            <div className="md:col-span-1"><input type="number" placeholder="Điểm" className="w-full bg-slate-800 border border-slate-600 p-2 rounded-lg text-white font-bold text-center outline-none focus:border-blue-500" value={periodData.score} onChange={(e) => handleInputChange(activeTab, pIndex, 'score', e.target.value)}/></div>
+                                            <div className="md:col-span-3"><input type="text" placeholder="Ghi chú / Nhận xét..." className="w-full bg-slate-800 border border-slate-600 p-2 rounded-lg text-white outline-none focus:border-blue-500" value={periodData.note} onChange={(e) => handleInputChange(activeTab, pIndex, 'note', e.target.value)}/></div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="mt-8 pt-4 border-t border-slate-700 flex justify-end">
+                                <button onClick={submitDiary} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-lg shadow-lg flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50"><Icon name="save" size={20}/> Lưu Sổ Đầu Bài</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- STATS COMPONENT (THỐNG KÊ TOÀN DIỆN) ---
+        const StatsComponent = ({ violationsList, diaryList, scoresList, showToast, appUser, refreshData, onDeleteLocal }) => {
+            const currentYear = new Date().getFullYear();
+            const [activeTab, setActiveTab] = useState('violations'); 
+            const [year, setYear] = useState(currentYear);
+            const [month, setMonth] = useState(new Date().getMonth() + 1);
+            const [week, setWeek] = useState(1);
+            const [filterClass, setFilterClass] = useState('');
+            const [deletingId, setDeletingId] = useState(null);
+
+            const filteredViolations = useMemo(() => {
+                return violationsList.filter(v => { 
+                    const d = new Date(v.date); 
+                    const matchYear = d.getFullYear() === parseInt(year);
+                    const matchMonth = (d.getMonth() + 1) === parseInt(month);
+                    const matchClass = filterClass ? v.classId === filterClass : true;
+                    return matchYear && matchMonth && matchClass;
+                }).sort((a,b) => new Date(b.date) - new Date(a.date));
+            }, [violationsList, year, month, filterClass]);
+
+            const filteredDiary = useMemo(() => {
+                return diaryList.filter(d => {
+                    const dateObj = new Date(d.date);
+                    const matchMonth = (dateObj.getMonth() + 1) === parseInt(month);
+                    const matchClass = filterClass ? d.classId === filterClass : true;
+                    return matchMonth && matchClass;
+                }).sort((a, b) => new Date(b.date) - new Date(a.date));
+            }, [diaryList, month, filterClass]);
+
+            const filteredScores = useMemo(() => {
+                let list = scoresList.filter(s => s.week == week);
+                if (filterClass) list = list.filter(s => s.classId == filterClass);
+                return list.sort((a, b) => parseFloat(b.total) - parseFloat(a.total));
+            }, [scoresList, week, filterClass]);
+
+            const handleDeleteViolation = async (id, violation) => {
+                if (!window.confirm('Bạn có chắc chắn muốn xóa vi phạm này không?')) return;
+                if (appUser.role !== 'admin' && appUser.role !== violation.reporterRole) {
+                    return showToast('Bạn không có quyền xóa báo cáo của chức vụ khác!', 'error');
+                }
+                setDeletingId(id);
+                try {
+                    await api.postData('deleteViolation', { id });
+                    showToast('Đã xóa vi phạm');
+                    if (onDeleteLocal) onDeleteLocal(id); 
+                    refreshData(true); 
+                } catch (error) { showToast('Lỗi khi xóa', 'error'); } 
+                finally { setDeletingId(null); }
+            };
+
+            return (
+                <div className="space-y-6 animate-fade-in pb-20">
+                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="flex items-center gap-2"><h3 className="font-bold text-xl flex items-center gap-2 text-white"><Icon name="bar-chart-2" /> Thống kê</h3></div>
+                        <div className="flex flex-wrap gap-2">
+                            {activeTab === 'ranking' ? (
+                                <div className="flex items-center bg-slate-900 rounded-lg px-3 border border-slate-600"><span className="text-slate-400 text-xs font-bold mr-2 uppercase">Tuần</span><input type="number" min="1" max="42" value={week} onChange={(e) => setWeek(e.target.value)} className="bg-transparent w-12 py-2 text-center font-bold text-yellow-400 outline-none" /></div>
+                            ) : (
+                                <select value={month} onChange={e=>setMonth(e.target.value)} className="bg-slate-900 border border-slate-600 p-2 rounded-lg text-sm text-white outline-none focus:border-blue-500">{Array.from({length:12},(_,i)=>i+1).map(m=><option key={m} value={m}>Tháng {m}</option>)}</select>
+                            )}
+                            <select value={filterClass} onChange={e=>setFilterClass(e.target.value)} className="bg-slate-900 border border-slate-600 p-2 rounded-lg text-sm text-white outline-none focus:border-blue-500"><option value="">Tất cả lớp</option>{CLASS_LIST.map(c=><option key={c} value={c}>{c}</option>)}</select>
+                        </div>
+                    </div>
+                    <div className="flex gap-2 border-b border-slate-700 pb-1">
+                        <button onClick={() => setActiveTab('violations')} className={`px-4 py-2 rounded-t-lg font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === 'violations' ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Icon name="alert-triangle" size={16}/> Vi phạm</button>
+                        <button onClick={() => setActiveTab('diary')} className={`px-4 py-2 rounded-t-lg font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === 'diary' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Icon name="book-open" size={16}/> Sổ đầu bài</button>
+                        <button onClick={() => setActiveTab('ranking')} className={`px-4 py-2 rounded-t-lg font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === 'ranking' ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Icon name="trophy" size={16}/> Xếp hạng tuần</button>
+                    </div>
+
+                    {activeTab === 'violations' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {filteredViolations.length === 0 ? <div className="col-span-3 text-center p-8 text-slate-500 italic">Không có dữ liệu vi phạm tháng này.</div> :
+                            filteredViolations.map(v => (
+                                <div key={v.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 relative hover:border-red-500 transition-colors group">
+                                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-600 rounded-l-xl"></div>
+                                    {(appUser.role === 'admin' || appUser.role === 'teacher' || appUser.role === 'prefect') && (
+                                        <button onClick={(e)=>{e.stopPropagation(); handleDeleteViolation(v.id, v)}} disabled={deletingId===v.id} className="absolute top-2 right-2 p-2 text-slate-500 hover:text-red-500 transition-colors z-10">{deletingId===v.id ? <Icon name="loader" className="animate-spin" size={16}/> : <Icon name="trash-2" size={16}/>}</button>
+                                    )}
+                                    <div className="pl-3">
+                                        <div className="flex justify-between text-xs text-slate-400 mb-1"><span>{v.date}</span><span className="font-bold text-blue-300">{v.classId}</span></div>
+                                        <div className="font-bold text-white mb-1 truncate">{v.studentName}</div>
+                                        <div className="text-red-200 text-sm bg-red-900/20 p-2 rounded mb-2">{v.content}</div>
+                                        <div className="text-xs text-slate-500 flex items-center gap-1"><Icon name="user" size={12}/> {v.reporter}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {activeTab === 'diary' && (
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                             <div className="overflow-x-auto custom-scrollbar">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-900 text-slate-400 uppercase text-xs font-bold"><tr><th className="p-4">Ngày</th><th className="p-4">Lớp</th><th className="p-4 text-center">Tiết</th><th className="p-4 text-center">Điểm</th><th className="p-4">Nhận xét</th><th className="p-4">Người chấm</th></tr></thead>
+                                    <tbody className="divide-y divide-slate-700">
+                                        {filteredDiary.length === 0 ? <tr><td colSpan="6" className="p-8 text-center text-slate-500 italic">Chưa có dữ liệu.</td></tr> :
+                                        filteredDiary.map((d, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-700/50">
+                                                <td className="p-4 whitespace-nowrap">{d.date ? new Date(d.date).toLocaleDateString('vi-VN') : ''}</td>
+                                                <td className="p-4 font-bold text-blue-300">{d.classId}</td>
+                                                <td className="p-4 text-center"><span className="bg-slate-700 px-2 py-1 rounded text-xs">{d.period}</span></td>
+                                                <td className="p-4 text-center font-bold text-yellow-400 text-lg">{d.score}</td>
+                                                <td className="p-4 text-slate-300 italic max-w-xs">{d.note || "-"}</td>
+                                                <td className="p-4 text-slate-400 text-xs">{d.reporter}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'ranking' && (
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                            <div className="p-4 bg-yellow-900/20 border-b border-yellow-900/30 text-center text-yellow-500 font-bold uppercase tracking-widest">Bảng Xếp Hạng Thi Đua - Tuần {week}</div>
+                            <div className="overflow-x-auto custom-scrollbar">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-900 text-slate-400 uppercase text-xs font-bold"><tr><th className="p-4 text-center w-16">Hạng</th><th className="p-4">Lớp</th><th className="p-4 text-center text-slate-500">Sổ ĐB</th><th className="p-4 text-center text-slate-500">Nề nếp</th><th className="p-4 text-center text-slate-500">Chào cờ</th><th className="p-4 text-center text-slate-500">Phong trào</th><th className="p-4 text-right text-green-400">Tổng điểm</th></tr></thead>
+                                    <tbody className="divide-y divide-slate-700">
+                                        {filteredScores.length === 0 ? <tr><td colSpan="7" className="p-8 text-center text-slate-500 italic">Chưa có điểm tổng kết tuần {week}.</td></tr> :
+                                        filteredScores.map((s, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-700/50 transition-colors">
+                                                <td className="p-4 text-center"><div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold mx-auto ${idx===0?'bg-yellow-500 text-black shadow-lg shadow-yellow-500/50':(idx===1?'bg-slate-400 text-black':(idx===2?'bg-orange-600 text-white':'bg-slate-700 text-slate-300'))}`}>{idx + 1}</div></td>
+                                                <td className="p-4 font-bold text-lg text-white">{s.classId}</td>
+                                                <td className="p-4 text-center text-slate-400">{s.scoreA}</td><td className="p-4 text-center text-slate-400">{s.scoreB}</td><td className="p-4 text-center text-slate-400">{s.scoreC}</td><td className="p-4 text-center text-slate-400">{s.scoreD}</td>
+                                                <td className="p-4 text-right font-black text-xl text-green-400">{parseFloat(s.total).toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const ApproveComponent = ({ usersList, setUsersList, showToast }) => {
+            const pending = usersList.filter(u => u.status === 'pending');
+            const handleAction = (uid) => {
+                setUsersList(prev => prev.map(u => u.id === uid ? { ...u, status: 'approved' } : u));
+                api.postData('approveUser', { id: uid }); showToast('Đã duyệt');
+            };
+            return (
+                <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg animate-fade-in">
+                    <h3 className="text-xl font-bold mb-4 text-orange-400 flex items-center gap-2"><Icon name="check-circle"/> Phê duyệt tài khoản</h3>
+                    <div className="overflow-x-auto"><table className="w-full text-left text-sm border-collapse"><thead className="bg-slate-700 text-slate-300"><tr><th className="p-4">Họ tên</th><th className="p-4">Email</th><th className="p-4">Chức vụ</th><th className="p-4">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-700">{pending.length === 0 ? <tr><td colSpan="4" className="p-8 text-center text-slate-500 italic">Không có yêu cầu nào.</td></tr> : pending.map(u => (<tr key={u.id} className="hover:bg-slate-700/50"><td className="p-4">{getFullName(u)}</td><td className="p-4">{u.email}</td><td className="p-4">{getRoleDisplayName(u.role)}</td><td className="p-4"><button onClick={()=>handleAction(u.id)} className="bg-green-600 px-3 py-1 rounded text-xs font-bold">DUYỆT</button></td></tr>))}</tbody></table></div>
+                </div>
+            );
+        };
+
+        const ManageComponent = ({ usersList, showToast }) => {
+            const [tab, setTab] = useState('teacher');
+            const [localTeachers, setLocalTeachers] = useState([]);
+            const [studentsList, setStudentsList] = useState([]);
+            const [newStu, setNewStu] = useState({ name: '', classId: '10/1' });
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [deletingStuId, setDeletingStuId] = useState(null);
+            const [studentSearch, setStudentSearch] = useState('');
+
+            useEffect(() => { setLocalTeachers(usersList.filter(u => u.role === 'teacher' && u.status === 'approved').map(u => ({ ...u, fullName: getFullName(u) }))); }, [usersList]);
+            useEffect(() => { api.fetchData('students').then(data => { if (data.length > 0) setStudentsList(data); }); }, []);
+            
+            const updateClass = async (uid, cls) => { setLocalTeachers(prev => prev.map(t => t.id === uid ? { ...t, classId: cls } : t)); await api.postData('updateTeacherClass', { id: uid, classId: cls }); showToast('Đã cập nhật lớp'); };
+            const addStudent = async () => { if (isSubmitting || !newStu.name) return; setIsSubmitting(true); const studentId = Date.now(); try { setStudentsList(prev => [...prev, { id: studentId, fullName: newStu.name, classId: newStu.classId }]); await api.postData('addStudent', { id: studentId, fullName: newStu.name, classId: newStu.classId }); showToast('Đã thêm HS'); setNewStu({...newStu, name: ''}); } catch (error) { showToast('Lỗi', 'error'); } finally { setIsSubmitting(false); } };
+            const deleteStudent = async (id) => { if (!window.confirm('Bạn chắc chắn muốn xóa?')) return; setDeletingStuId(id); try { await api.postData('deleteStudent', { id }); setStudentsList(prev => prev.filter(s => s.id !== id)); showToast('Đã xóa'); } catch (error) { showToast('Lỗi', 'error'); } finally { setDeletingStuId(null); } }
+            
+            const filteredStudentsList = useMemo(() => { if (!studentSearch) return studentsList; return studentsList.filter(s => (s.fullName && s.fullName.toLowerCase().includes(studentSearch.toLowerCase())) || (s.classId && s.classId.toLowerCase().includes(studentSearch.toLowerCase()))); }, [studentsList, studentSearch]);
+
+            return (
+                <div className="space-y-6 animate-fade-in">
+                    <div className="flex gap-4 border-b border-slate-700 pb-4"><button onClick={()=>setTab('teacher')} className={`px-6 py-2 rounded-full font-bold ${tab==='teacher'?'bg-blue-600':'bg-slate-700'}`}>Giáo viên</button><button onClick={()=>setTab('student')} className={`px-6 py-2 rounded-full font-bold ${tab==='student'?'bg-blue-600':'bg-slate-700'}`}>Học sinh</button></div>
+                    {tab === 'teacher' ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">{localTeachers.length === 0 ? <div className="col-span-3 text-center p-8 text-slate-500 border border-dashed rounded-xl">Chưa có dữ liệu GV.</div> : localTeachers.map(t => (<div key={t.id} className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col gap-3 shadow-lg"><div className="flex items-center gap-3 pb-3 border-b border-slate-700"><div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center font-bold text-lg">{(t.fullName || '?').charAt(0)}</div><div><div className="font-bold">{t.fullName}</div><div className="text-xs text-slate-400">{t.email}</div></div></div><div><label className="text-xs uppercase font-bold mb-1 block">Lớp chủ nhiệm:</label><select className="w-full bg-slate-900 border border-slate-600 rounded p-2 outline-none" value={t.classId || ''} onChange={(e)=>updateClass(t.id, e.target.value)}><option value="">-- Chọn --</option>{CLASS_LIST.map(c=><option key={c} value={c}>{c}</option>)}</select></div></div>))}</div>
+                    ) : (
+                    <div className="flex justify-center"><div className="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-md relative z-10 overflow-hidden">{isSubmitting && (<div className="absolute inset-0 bg-slate-900/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm animate-fade-in"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2"></div></div>)}<h3 className="text-center text-xl font-bold mb-6 text-blue-300">Dữ liệu học sinh</h3><div className="space-y-4"><div><label className="block text-slate-400 mb-2 font-bold text-sm pl-1">Lớp</label><select className="w-full bg-slate-800 border border-slate-700 text-white p-4 rounded-2xl outline-none" value={newStu.classId} onChange={e=>setNewStu({...newStu, classId: e.target.value})}>{CLASS_LIST.map(c=><option key={c} value={c}>{c}</option>)}</select></div><div><label className="block text-slate-400 mb-2 font-bold text-sm pl-1">Tên học sinh</label><input className="w-full bg-slate-800 border border-slate-700 text-white p-4 rounded-2xl outline-none" placeholder="Nhập tên học sinh..." value={newStu.name} onChange={e=>setNewStu({...newStu, name: e.target.value})}/></div><div className="pt-4"><button onClick={addStudent} disabled={isSubmitting} className="w-full bg-blue-700 hover:bg-blue-600 text-white font-bold py-3 rounded-full shadow-lg flex justify-center items-center gap-2">{isSubmitting ? <Icon name="loader" className="animate-spin" size={20}/> : "Cập nhật"}</button></div></div></div><div className="absolute top-full mt-8 w-full max-w-3xl left-1/2 -translate-x-1/2"><div className="bg-slate-800 p-4 rounded-xl border border-slate-700"><h4 className="font-bold mb-4 text-slate-400 text-center uppercase text-sm tracking-widest">Danh sách hiện có ({studentsList.length})</h4><div className="mb-3 relative"><input type="text" className="w-full bg-slate-900 border border-slate-600 rounded-lg py-2 pl-9 pr-4 text-sm focus:border-blue-500 outline-none" placeholder="Tìm kiếm..." value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)}/><div className="absolute left-3 top-2.5 text-slate-500"><Icon name="search" size={16}/></div></div><div className="max-h-[400px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">{filteredStudentsList.map((s, idx) => (<div key={idx} className="flex justify-between items-center p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 hover:border-blue-500/50"><span className="font-medium pl-2">{s.fullName}</span><div className="flex items-center gap-2"><span className="bg-blue-900/30 text-blue-300 px-3 py-1 rounded-full text-xs font-bold font-mono">{s.classId}</span><button onClick={() => deleteStudent(s.id)} disabled={deletingStuId === s.id} className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-900/20">{deletingStuId === s.id ? <Icon name="loader" className="animate-spin" size={16}/> : <Icon name="trash-2" size={16}/>}</button></div></div>))}</div></div></div></div>
+                    )}
+                </div>
+            );
+        };
+
+        const ReportComponent = ({ studentsList, appUser, showToast }) => {
+            const [form, setForm] = useState({ date: new Date().toISOString().split('T')[0], studentId: '', violation: '' });
+            const [search, setSearch] = useState('');
+            const [debouncedSearch, setDebouncedSearch] = useState('');
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            useEffect(() => { const handler = setTimeout(() => { setDebouncedSearch(search); }, 100); return () => { clearTimeout(handler); }; }, [search]);
+            const filteredStudents = debouncedSearch ? studentsList.filter(s => s.fullName.toLowerCase().includes(debouncedSearch.toLowerCase())).slice(0,5) : [];
+            const getStudentDetails = () => studentsList.find(s => s.id === form.studentId) || {};
+            const submitReport = async () => {
+                if (isSubmitting) return; const stu = getStudentDetails(); if (!stu.id) return showToast('Học sinh không hợp lệ', 'error');
+                setIsSubmitting(true);
+                try { await api.postData('addViolation', { date: form.date, studentId: stu.id, studentName: stu.fullName, classId: stu.classId, content: form.violation, reporter: getFullName(appUser), reporterRole: appUser.role }); showToast('Đã gửi báo cáo!'); setForm({...form, violation: '', studentId: ''}); setSearch(''); } catch (error) { showToast('Có lỗi xảy ra!', 'error'); } finally { setIsSubmitting(false); }
+            };
+
+            return (
+                <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 max-w-2xl mx-auto shadow-xl animate-fade-in relative">
+                    {isSubmitting && (<div className="absolute inset-0 bg-slate-900/80 z-50 rounded-2xl flex flex-col items-center justify-center backdrop-blur-sm"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div><div className="text-white font-bold text-lg">Đang gửi báo cáo...</div></div>)}
+                    <h2 className="text-2xl font-bold mb-6 text-center uppercase text-red-500 flex justify-center gap-2"><Icon name="alert-triangle" size={28}/> Báo cáo vi phạm</h2>
+                    <div className="space-y-5">
+                        <div><label className="block text-slate-400 mb-2 text-sm">Ngày</label><input type="date" className="w-full bg-slate-900 border border-slate-600 p-3 rounded text-white" value={form.date} onChange={e=>setForm({...form, date: e.target.value})}/></div>
+                        <div className="relative"><label className="block text-slate-400 mb-2 text-sm">Học sinh</label><input type="text" className="w-full bg-slate-900 border border-slate-600 p-3 rounded pl-10" placeholder="Nhập tên..." value={search} onChange={e=>setSearch(e.target.value)}/><div className="absolute left-3 top-10 text-slate-500"><Icon name="search" size={18}/></div>{filteredStudents.length > 0 && (<div className="absolute top-full w-full bg-slate-700 shadow-xl z-10 rounded mt-1 border border-slate-600">{filteredStudents.map(s=>(<div key={s.id} className="p-3 hover:bg-slate-600 cursor-pointer flex justify-between" onClick={()=>{setForm({...form, studentId: s.id}); setSearch(`${s.fullName} - ${s.classId}`); }}><span>{s.fullName}</span><span className="text-xs bg-slate-800 px-2 py-1 rounded">{s.classId}</span></div>))}</div>)}</div>
+                        <div><label className="block text-slate-400 mb-2 text-sm">Lỗi vi phạm</label><textarea className="w-full bg-slate-900 border border-slate-600 p-3 rounded h-32 text-white" value={form.violation} onChange={e=>setForm({...form, violation: e.target.value})} placeholder="Mô tả lỗi..."/></div>
+                        <button onClick={submitReport} disabled={isSubmitting} className="w-full bg-red-600 hover:bg-red-700 p-4 rounded font-bold text-white shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? <Icon name="loader" className="animate-spin" size={20}/> : <Icon name="send" size={20}/>} GỬI LUÔN</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- APP MAIN ---
+        function App() {
+            const [currentTheme, setCurrentTheme] = useState(() => { const saved = localStorage.getItem('THPT_THEME'); return saved ? JSON.parse(saved) : THEMES[0]; });
+            const [view, setView] = useState(() => localStorage.getItem('THPT_APP_USER') ? 'dashboard' : 'home'); 
+            const [appUser, setAppUser] = useState(() => { const savedUser = localStorage.getItem('THPT_APP_USER'); return savedUser ? JSON.parse(savedUser) : null; });
+            const [notification, setNotification] = useState({ message: '', type: '' });
+            
+            // STATE DỮ LIỆU
+            const [usersList, setUsersList] = useState([]);
+            const [studentsList, setStudentsList] = useState([]);
+            const [violationsList, setViolationsList] = useState([]);
+            const [diaryList, setDiaryList] = useState([]);
+            const [scoresList, setScoresList] = useState([]);
+            
+            const [isLoading, setIsLoading] = useState(false);
+            const [isRefreshing, setIsRefreshing] = useState(false);
+            const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+            const [registerForm, setRegisterForm] = useState({ firstName: '', lastName: '', username: '', role: 'prefect', email: '', password: '', confirmPassword: '' });
+
+            const showToast = (msg, type='success') => setNotification({ message: msg, type });
+            const isFetchingRef = useRef(false);
+
+            useEffect(() => { 
+                let interval;
+                if (appUser) {
+                    refreshData(false); 
+                    interval = setInterval(() => { refreshData(true); }, 5000); 
+                }
+                return () => { if (interval) clearInterval(interval); };
+            }, [appUser]);
+
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
+            const handleSetTheme = (theme) => { setCurrentTheme(theme); localStorage.setItem('THPT_THEME', JSON.stringify(theme)); };
+
+            const refreshData = async (isBackground = false) => {
+                if (isFetchingRef.current) return;
+                isFetchingRef.current = true;
+                if (!isBackground) setIsRefreshing(true);
+                try {
+                    const [users, students, violations, diary, scores] = await Promise.all([
+                        api.fetchData('users'), api.fetchData('students'), api.fetchData('violations'), api.fetchData('getDiary'), api.fetchData('getScores')
+                    ]);
+                    if (users.length > 0) setUsersList(prev => JSON.stringify(prev) !== JSON.stringify(users) ? users : prev);
+                    if (students.length > 0) setStudentsList(prev => JSON.stringify(prev) !== JSON.stringify(students) ? students : prev);
+                    if (violations.length > 0) setViolationsList(prev => JSON.stringify(prev) !== JSON.stringify(violations) ? violations : prev);
+                    if (diary.length > 0) setDiaryList(prev => JSON.stringify(prev) !== JSON.stringify(diary) ? diary : prev);
+                    if (scores.length > 0) setScoresList(prev => JSON.stringify(prev) !== JSON.stringify(scores) ? scores : prev);
+                } catch (error) { console.error("Lỗi cập nhật dữ liệu:", error); } 
+                finally {
+                    if (!isBackground) setIsRefreshing(false);
+                    isFetchingRef.current = false;
+                }
+            };
+
+            const handleLocalDelete = (id) => { setViolationsList(prev => prev.filter(v => v.id !== id)); };
+
+            const handleLogin = () => {
+                const { username, password } = loginForm;
+                if (!username || !password) return showToast('Vui lòng nhập đủ thông tin', 'error');
+                if (username === 'THPTNGUYENTRAI' && password === 'NGUYENTRAIDANANG') {
+                    const adminUser = { id: 'admin', fullName: 'Quản Trị Viên', role: 'admin' };
+                    setAppUser(adminUser); localStorage.setItem('THPT_APP_USER', JSON.stringify(adminUser)); setView('dashboard'); return;
+                }
+                setIsLoading(true);
+                api.fetchData('users').then(users => {
+                    setIsLoading(false);
+                    if (!Array.isArray(users) || users.length === 0) { showToast('Lỗi kết nối CSDL hoặc sai thông tin', 'error'); return; }
+                    const found = users.find(u => u.username == username && u.password == password);
+                    if (found) {
+                        if (found.status === 'pending') { showToast('Tài khoản đang chờ phê duyệt!', 'error'); } 
+                        else { 
+                            const userWithFullName = { ...found, fullName: getFullName(found) };
+                            setAppUser(userWithFullName); localStorage.setItem('THPT_APP_USER', JSON.stringify(userWithFullName)); setView('dashboard'); 
+                        }
+                    } else { showToast('Sai tên đăng nhập hoặc mật khẩu', 'error'); }
+                });
+            };
+
+            const handleLogout = () => { setAppUser(null); localStorage.removeItem('THPT_APP_USER'); setView('home'); };
+
+            const handleRegister = async () => {
+                if (registerForm.password !== registerForm.confirmPassword) return showToast('Mật khẩu không khớp', 'error');
+                if (!registerForm.firstName || !registerForm.lastName || !registerForm.email || !registerForm.username) return showToast('Nhập thiếu thông tin', 'error');
+                setIsLoading(true);
+                await api.postData('register', { ...registerForm, username: registerForm.username.trim(), status: 'pending', classId: '' });
+                setIsLoading(false);
+                showToast('Đăng ký thành công! Chờ duyệt.');
+                setView('login');
+            };
+
+            const HERO_IMAGES = [
+                { title: 'Toàn cảnh nhà trường', url: 'https://tracuudiemvnedu.vip/wp-content/uploads/2025/04/thong-rin-ve-truong-thpt-nguyen-trai-da-nang.jpg' },
+                { title: 'Cổng trường Nguyễn Trãi', url: 'https://iwater.vn/Image/Picture/New/truong-thpt-nguyen-trai-da-nang.jpg' },
+                { title: 'Hoạt động ngoại khóa', url: 'https://r73troypb4obj.vcdn.cloud/website02/uploads/pictures/626612161a1b852f357a3daf/content_danh-gia-truong-thpt-nguyen-trai-tinh-da-nang-co-tot-khong2.jpg' }
+            ];
+
+            if (view === 'home') {
+                return (
+                    <div className={`min-h-screen text-white flex flex-col font-sans transition-colors duration-500 ${currentTheme.class}`}>
+                        <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-700 shadow-lg sticky top-0 z-50">
+                            <div className="container mx-auto px-4 py-3 flex flex-col md:flex-row items-center justify-between gap-4">
+                                <div className="flex items-center gap-3 flex-1"><SchoolLogo size="md" /><div><h2 className="text-red-500 font-bold text-sm uppercase drop-shadow-md">Sở Giáo Dục Đào Tạo Thành Phố Đà Nẵng</h2><h1 className="text-white font-bold text-xl uppercase mt-1 drop-shadow-lg">Trường THPT Nguyễn Trãi</h1></div></div>
+                                <div className="flex items-center gap-4"><div className="flex items-center gap-2 text-white font-bold text-lg"><Icon name="phone" size={20}/> 02363842322</div><div className="flex gap-3 items-center"><ThemeSelector currentTheme={currentTheme} onSelectTheme={handleSetTheme} />{appUser ? (<button onClick={() => setView('dashboard')} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold border border-blue-400 flex items-center gap-2"><Icon name="layout-dashboard" size={18}/> Vào Hệ Thống</button>) : (<><button onClick={() => setView('login')} className="bg-[#c2410c] hover:bg-[#9a3412] text-white px-6 py-2 rounded-full font-bold border border-orange-400">Đăng nhập</button><button onClick={() => setView('register')} className="bg-[#ea580c] hover:bg-[#c2410c] text-white px-6 py-2 rounded-full font-bold border border-orange-400">Đăng kí</button></>)}</div></div>
+                            </div>
+                        </header>
+                        <div className="bg-white/10 py-2 text-center text-white font-medium border-b-4 border-blue-500 shadow-md z-10 backdrop-blur-sm">01 Phan Văn Định, Phường Liên Chiểu, TP Đà Nẵng</div>
+                        <div className="flex-1 p-8 flex items-center justify-center relative"><div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 pointer-events-none"></div><div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-6xl z-10">{HERO_IMAGES.map((item, i) => (<div key={i} className="rounded-2xl overflow-hidden border-4 border-white/20 shadow-2xl h-64 md:h-96 relative group cursor-pointer hover:border-white/50 transition-all"><img src={item.url} alt={item.title} className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700" /><div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex items-end p-6"><span className="font-bold text-xl text-white drop-shadow-md border-l-4 border-red-500 pl-3">{item.title}</span></div></div>))}</div></div>
+                        {notification.message && <Toast {...notification} onClose={() => setNotification({})} />}
+                    </div>
+                );
+            }
+
+            if (view === 'login' || view === 'register') {
+                const isLogin = view === 'login';
+                return (
+                    <div className={`min-h-screen flex items-center justify-center p-4 relative bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] transition-colors duration-500 ${currentTheme.class}`}>
+                        {isLoading && <div className="absolute inset-0 bg-black/70 z-50 flex items-center justify-center text-white flex-col gap-4"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>Đang xử lý...</div>}
+                        <div className="absolute top-6 right-6 z-50"><ThemeSelector currentTheme={currentTheme} onSelectTheme={handleSetTheme} /></div>
+                        <div className="bg-slate-800/90 backdrop-blur-md w-full max-w-md p-8 rounded-2xl shadow-2xl border border-slate-700 relative overflow-hidden">
+                            <div className={`absolute top-0 left-0 w-full h-2 bg-gradient-to-r ${isLogin?'from-blue-500 to-purple-500':'from-orange-500 to-red-500'}`}></div>
+                            <div className="flex justify-center mb-6"><SchoolLogo size="lg" className="border-4 border-red-600" /></div>
+                            <h2 className="text-3xl font-bold text-white text-center mb-6 uppercase tracking-wider">{isLogin?'Đăng nhập':'Đăng kí tài khoản'}</h2>
+                            <div className="space-y-5">
+                                {!isLogin && (<div className="flex gap-3"><input placeholder="Họ" className="w-1/2 bg-slate-900 border border-slate-600 p-3 rounded-lg outline-none focus:border-blue-500" value={registerForm.firstName} onChange={e=>setRegisterForm({...registerForm, firstName: e.target.value})}/><input placeholder="Tên" className="w-1/2 bg-slate-900 border border-slate-600 p-3 rounded-lg outline-none focus:border-blue-500" value={registerForm.lastName} onChange={e=>setRegisterForm({...registerForm, lastName: e.target.value})}/></div>)}
+                                {!isLogin && <select className="w-full bg-slate-900 border border-slate-600 p-3 rounded-lg outline-none focus:border-blue-500" value={registerForm.role} onChange={e=>setRegisterForm({...registerForm, role: e.target.value})}><option value="prefect">Ban Thi Đua</option><option value="teacher">Giáo viên chủ nhiệm</option></select>}
+                                {!isLogin && <input placeholder="Email (Gmail)" className="w-full bg-slate-900 border border-slate-600 p-3 rounded-lg outline-none focus:border-blue-500" value={registerForm.email} onChange={e=>setRegisterForm({...registerForm, email: e.target.value})}/>}
+                                <div className="flex items-center bg-slate-900 rounded-xl border border-slate-600 px-4 py-3 focus-within:border-blue-500 transition-all"><Icon name="user" size={20} className="text-slate-500 mr-3"/><input value={isLogin ? loginForm.username : registerForm.username} onChange={e => isLogin ? setLoginForm({...loginForm, username: e.target.value}) : setRegisterForm({...registerForm, username: e.target.value})} type="text" className="bg-transparent flex-1 text-white outline-none" placeholder={isLogin ? "Tên đăng nhập" : "Tên đăng nhập tự tạo"} /></div>
+                                <PasswordField value={isLogin ? loginForm.password : registerForm.password} onChange={e => isLogin ? setLoginForm({...loginForm, password: e.target.value}) : setRegisterForm({...registerForm, password: e.target.value})} placeholder="Mật khẩu" />
+                                {!isLogin && (<PasswordField value={registerForm.confirmPassword} onChange={e => setRegisterForm({...registerForm, confirmPassword: e.target.value})} placeholder="Nhập lại mật khẩu" />)}
+                                <button onClick={isLogin?handleLogin:handleRegister} className={`w-full bg-gradient-to-r ${isLogin?'from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600':'from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500'} text-white font-bold py-3.5 rounded-xl mt-4 shadow-lg active:scale-95 transition-all`}>{isLogin?'ĐĂNG NHẬP':'ĐĂNG KÍ NGAY'}</button>
+                                <div className="flex justify-between mt-4 text-sm font-medium"><button onClick={()=>setView('home')} className="text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"><Icon name="home" size={14}/> Trang chủ</button><button onClick={()=>setView(isLogin?'register':'login')} className="text-blue-400 hover:text-blue-300 transition-colors">{isLogin?'Chưa có tài khoản?':'Đã có tài khoản?'}</button></div>
+                            </div>
+                        </div>
+                        {notification.message && <Toast {...notification} onClose={() => setNotification({})} />}
+                    </div>
+                );
+            }
+
+            if (view === 'dashboard') {
+                return (
+                    <div className={`min-h-screen text-white font-sans transition-colors duration-500 ${currentTheme.class}`}>
+                        <header className="bg-slate-900/90 backdrop-blur-md p-4 flex justify-between items-center shadow-lg sticky top-0 z-40 border-b border-white/10">
+                            <div className="flex items-center gap-3 cursor-pointer hover:opacity-90" onClick={()=>setView('dashboard')}><SchoolLogo size="md" /><div className="hidden sm:block"><div className="text-[10px] text-blue-200 uppercase tracking-widest">Hệ thống quản lý</div><span className="font-bold text-lg leading-none">THPT NGUYỄN TRÃI</span></div></div>
+                            <div className="flex items-center gap-4">
+                                <div className="hidden md:flex flex-col items-end"><span className="text-sm font-bold">{getFullName(appUser)}</span><span className="text-xs text-blue-300 bg-blue-900 px-2 py-0.5 rounded-full">{getRoleDisplayName(appUser?.role)}</span></div>
+                                <ThemeSelector currentTheme={currentTheme} onSelectTheme={handleSetTheme} />
+                                <button onClick={() => refreshData(false)} disabled={isRefreshing} className={`p-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition-all shadow-md text-white border border-blue-500 ${isRefreshing ? 'opacity-80 cursor-wait' : ''}`} title="Làm mới dữ liệu ngay lập tức"><Icon name="refresh-cw" size={20} className={isRefreshing ? "animate-spin" : ""}/></button>
+                                <button onClick={handleLogout} className="p-2 bg-red-600 hover:bg-red-500 rounded-lg transition-all shadow-md text-white" title="Đăng xuất"><Icon name="log-out" size={20}/></button>
+                            </div>
+                        </header>
+                        <div className="container mx-auto p-4 md:p-6">
+                            <div className="animate-fade-in">
+                                <div className="flex items-center gap-3 mb-8"><div className="w-1.5 h-8 bg-red-500 rounded-full"></div><h2 className="text-2xl font-bold uppercase tracking-wide">Tiện ích hệ thống</h2></div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div onClick={()=>setView('report')} className="bg-slate-800 hover:bg-slate-700 p-8 rounded-2xl border border-slate-600 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-2xl hover:border-blue-500 group flex flex-col items-center justify-center gap-4 text-center relative overflow-hidden">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                        <div className="w-20 h-20 rounded-full bg-blue-900/30 flex items-center justify-center group-hover:scale-110 border border-blue-500/30"><Icon name="file-text" size={40} className="text-blue-400"/></div>
+                                        <span className="text-xl font-bold group-hover:text-blue-400 transition-colors">Báo Cáo Vi Phạm</span>
+                                        <p className="text-slate-400 text-sm">Ghi nhận vi phạm và tự động gửi thông báo đến GVCN.</p>
+                                    </div>
+                                    <div onClick={()=>setView('diary')} className="bg-slate-800 hover:bg-slate-700 p-8 rounded-2xl border border-slate-600 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-2xl hover:border-pink-500 group flex flex-col items-center justify-center gap-4 text-center relative overflow-hidden">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-pink-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                        <div className="w-20 h-20 rounded-full bg-pink-900/30 flex items-center justify-center group-hover:scale-110 border border-pink-500/30"><Icon name="book-open" size={40} className="text-pink-400"/></div>
+                                        <span className="text-xl font-bold group-hover:text-pink-400 transition-colors">Sổ Đầu Bài</span>
+                                        <p className="text-slate-400 text-sm">Báo cáo sổ đầu bài hàng ngày.</p>
+                                    </div>
+                                    <div onClick={()=>setView('ranking')} className="bg-slate-800 hover:bg-slate-700 p-8 rounded-2xl border border-slate-600 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-2xl hover:border-yellow-500 group flex flex-col items-center justify-center gap-4 text-center relative overflow-hidden">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                        <div className="w-20 h-20 rounded-full bg-yellow-900/30 flex items-center justify-center group-hover:scale-110 border border-yellow-500/30"><Icon name="trophy" size={40} className="text-yellow-400"/></div>
+                                        <span className="text-xl font-bold group-hover:text-yellow-400 transition-colors">Thi Đua Tuần</span>
+                                        <p className="text-slate-400 text-sm">Nhập điểm và xếp hạng thi đua.</p>
+                                    </div>
+                                    <div onClick={()=>setView('stats')} className="bg-slate-800 hover:bg-slate-700 p-8 rounded-2xl border border-slate-600 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-2xl hover:border-green-500 group flex flex-col items-center justify-center gap-4 text-center relative overflow-hidden">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                        <div className="w-20 h-20 rounded-full bg-green-900/30 flex items-center justify-center group-hover:scale-110 border border-green-500/30"><Icon name="bar-chart-2" size={40} className="text-green-400"/></div>
+                                        <span className="text-xl font-bold group-hover:text-green-400 transition-colors">Tra Cứu & Thống Kê</span>
+                                        <p className="text-slate-400 text-sm">Xem biểu đồ thống kê, sổ đầu bài và bảng xếp hạng.</p>
+                                    </div>
+                                    <div onClick={()=>setView('manage')} className="bg-slate-800 hover:bg-slate-700 p-8 rounded-2xl border border-slate-600 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-2xl hover:border-purple-500 group flex flex-col items-center justify-center gap-4 text-center relative overflow-hidden">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                        <div className="w-20 h-20 rounded-full bg-purple-900/30 flex items-center justify-center group-hover:scale-110 border border-purple-500/30"><Icon name="users" size={40} className="text-purple-400"/></div>
+                                        <span className="text-xl font-bold group-hover:text-purple-400 transition-colors">Quản Lý Dữ Liệu</span>
+                                        <p className="text-slate-400 text-sm">Quản lý danh sách giáo viên và học sinh toàn trường.</p>
+                                    </div>
+                                    {appUser.role === 'admin' && (
+                                        <div onClick={()=>setView('approve')} className="bg-slate-800 hover:bg-slate-700 p-8 rounded-2xl border border-slate-600 cursor-pointer transition-all hover:-translate-y-1 hover:shadow-2xl hover:border-orange-500 group flex flex-col items-center justify-center gap-4 text-center relative overflow-hidden md:col-span-1 lg:col-span-1">
+                                            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                            <div className="relative"><div className="w-20 h-20 rounded-full bg-orange-900/30 flex items-center justify-center group-hover:scale-110 border border-orange-500/30"><Icon name="check-circle" size={40} className="text-orange-400"/></div>{usersList.some(u=>u.status==='pending') && <span className="absolute top-0 right-0 w-6 h-6 bg-red-600 rounded-full flex items-center justify-center text-xs font-bold animate-bounce border-2 border-slate-800">!</span>}</div>
+                                            <span className="text-xl font-bold group-hover:text-orange-400 transition-colors">Phê Duyệt Tài Khoản</span>
+                                            <p className="text-slate-400 text-sm">Duyệt quyền truy cập cho giáo viên và ban tự quản mới.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        {notification.message && <Toast {...notification} onClose={() => setNotification({})} />}
+                        {isLoading && <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center flex-col gap-4 text-white font-bold backdrop-blur-sm"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div><span>Đang đồng bộ dữ liệu...</span></div>}
+                    </div>
+                );
+            }
+
+            if (view === 'approve') return <div className={`min-h-screen p-6 transition-colors duration-500 ${currentTheme.class} text-white`}><button onClick={()=>setView('dashboard')} className="mb-4 flex items-center gap-2 text-slate-300 hover:text-white font-bold"><Icon name="arrow-left"/> Quay lại</button><ApproveComponent usersList={usersList} setUsersList={setUsersList} showToast={showToast} refreshData={refreshData} /></div>;
+            if (view === 'manage') return <div className={`min-h-screen p-6 transition-colors duration-500 ${currentTheme.class} text-white`}><button onClick={()=>setView('dashboard')} className="mb-4 flex items-center gap-2 text-slate-300 hover:text-white font-bold"><Icon name="arrow-left"/> Quay lại</button><ManageComponent usersList={usersList} showToast={showToast} refreshData={refreshData} /></div>;
+            if (view === 'report') return <div className={`min-h-screen p-6 transition-colors duration-500 ${currentTheme.class} text-white`}><button onClick={()=>setView('dashboard')} className="mb-4 flex items-center gap-2 text-slate-300 hover:text-white font-bold"><Icon name="arrow-left"/> Quay lại</button><ReportComponent studentsList={studentsList} appUser={appUser} showToast={showToast} /></div>;
+            if (view === 'stats') return <div className={`min-h-screen p-6 transition-colors duration-500 ${currentTheme.class} text-white`}><button onClick={()=>setView('dashboard')} className="mb-4 flex items-center gap-2 text-slate-300 hover:text-white font-bold"><Icon name="arrow-left"/> Quay lại</button><StatsComponent violationsList={violationsList} diaryList={diaryList} scoresList={scoresList} showToast={showToast} appUser={appUser} refreshData={refreshData} onDeleteLocal={handleLocalDelete} /></div>;
+            if (view === 'diary') return <div className={`min-h-screen p-6 transition-colors duration-500 ${currentTheme.class} text-white`}><button onClick={()=>setView('dashboard')} className="mb-4 flex items-center gap-2 text-slate-300 hover:text-white font-bold"><Icon name="arrow-left"/> Quay lại</button><DiaryComponent showToast={showToast} appUser={appUser}/></div>;
+            if (view === 'ranking') return <div className={`min-h-screen p-4 md:p-6 transition-colors duration-500 ${currentTheme.class} text-white flex flex-col`}><RankingComponent showToast={showToast} api={api} onCancel={()=>setView('dashboard')} /></div>;
+
+            return null;
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
